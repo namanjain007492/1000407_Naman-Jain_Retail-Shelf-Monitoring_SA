@@ -77,7 +77,7 @@ CATALOG = {
     "Coca-Cola":    {"category": "Carbonated", "cost": 0.85, "retail": 1.99, "target_par": 8,  "color": "#ff4757"},
     "Pepsi":        {"category": "Carbonated", "cost": 0.80, "retail": 1.89, "target_par": 8,  "color": "#2ed573"},
     "Sprite":       {"category": "Carbonated", "cost": 0.75, "retail": 1.79, "target_par": 6,  "color": "#ffa502"},
-    "Pure Milk":     {"category": "Dairy",      "cost": 1.20, "retail": 2.49, "target_par": 6,  "color": "#70a1ff"}
+    "Pure Milk":    {"category": "Dairy",      "cost": 1.20, "retail": 2.49, "target_par": 6,  "color": "#70a1ff"}
 }
 CLASSES = list(CATALOG.keys())
 
@@ -91,7 +91,7 @@ with st.sidebar:
     
     st.subheader("🔑 Inference Credentials")
     api_key = st.text_input("Roboflow API Key", type="password", help="Enter your private Roboflow API key")
-    model_endpoint = st.text_input("Endpoint / Version", value="stocksense-pro/1")
+    model_endpoint = st.text_input("Endpoint / Version", value="stocksense-pro/2")
     
     st.markdown("---")
     st.subheader("🎯 Vision Hyperparameters")
@@ -175,17 +175,22 @@ if uploaded_file is not None:
         payload = response.json()
         predictions = payload.get("predictions", [])
         
-        # Bounding Box Annotation
+        # Bounding Box Annotation with Case-Insensitive Catalog Normalization
         annotated_img = source_img.copy()
         draw = ImageDraw.Draw(annotated_img)
         detected_counts = {c: 0 for c in CLASSES}
         pred_records = []
 
+        catalog_lookup = {k.lower(): k for k in CATALOG.keys()}
+
         for p in predictions:
-            c_name = p.get("class")
+            raw_c_name = p.get("class", "")
             conf = p.get("confidence", 0.0)
             x, y, w, h = p.get("x"), p.get("y"), p.get("width"), p.get("height")
             
+            normalized_key = catalog_lookup.get(raw_c_name.lower(), raw_c_name)
+            c_name = normalized_key
+
             x0 = x - (w / 2)
             y0 = y - (h / 2)
             x1 = x + (w / 2)
@@ -229,7 +234,6 @@ if uploaded_file is not None:
             with res_col1:
                 st.image(annotated_img, caption="Bounding Boxes & Confidence Labels", use_container_width=True)
             with res_col2:
-                # Key Metrics Cards
                 total_units = sum(detected_counts.values())
                 stock_value = sum(detected_counts[k] * CATALOG[k]["retail"] for k in CLASSES)
                 oos_count = sum(1 for k in CLASSES if detected_counts[k] == 0)
@@ -261,7 +265,6 @@ if uploaded_file is not None:
             chart_col1, chart_col2 = st.columns(2)
 
             with chart_col1:
-                # Target vs Actual Bar Chart
                 df_bar = []
                 for k in CLASSES:
                     df_bar.append({"Product": k, "Quantity": detected_counts[k], "Metric": "Current On-Shelf"})
@@ -281,7 +284,6 @@ if uploaded_file is not None:
                 st.plotly_chart(fig_bars, use_container_width=True)
 
             with chart_col2:
-                # Share of Shelf Donut Chart
                 fig_donut = px.pie(
                     names=list(detected_counts.keys()),
                     values=list(detected_counts.values()),
