@@ -1,238 +1,368 @@
 import streamlit as st
 import requests
 import io
+import time
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from PIL import Image, ImageDraw, ImageFont
 
-# --- PAGE SETUP ---
+# ==========================================
+# PAGE SETUP & BRANDING
+# ==========================================
 st.set_page_config(
-    page_title="StockSense Pro | Enterprise Retail Vision",
-    page_icon="📦",
+    page_title="StockSense Pro | Enterprise Retail AI",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- MODERN UI STYLING ---
+# Custom High-End Dashboard CSS
 st.markdown("""
-    <style>
-    .metric-card {
-        background-color: #1e2530;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border: 1px solid #2e3846;
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
-    .stMetric {
-        background: transparent !important;
+    
+    /* Global Card Containers */
+    .saas-card {
+        background: linear-gradient(145deg, #161b22, #0d1117);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
-    </style>
+    
+    .status-badge {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        display: inline-block;
+    }
+    .badge-ok { background: rgba(35, 196, 131, 0.15); color: #2ecc71; border: 1px solid #2ecc71; }
+    .badge-warn { background: rgba(241, 196, 15, 0.15); color: #f1c40f; border: 1px solid #f1c40f; }
+    .badge-crit { background: rgba(231, 76, 60, 0.15); color: #e74c3c; border: 1px solid #e74c3c; }
+    
+    /* Polished Tab Bar */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #0d1117;
+        padding: 8px;
+        border-radius: 12px;
+        border: 1px solid #30363d;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 8px 18px;
+        color: #8b949e;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #238636 !important;
+        color: #ffffff !important;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-# --- MODEL CONSTANTS ---
-CLASSES = ["Mineral Water", "Coca-Cola", "Pepsi", "Sprite", "Pure Milk"]
-UNIT_PRICES = {
-    "Mineral Water": 1.25,
-    "Coca-Cola": 1.99,
-    "Pepsi": 1.89,
-    "Sprite": 1.79,
-    "Pure Milk": 2.49
+# ==========================================
+# CONFIGURATION & CATALOG DATA
+# ==========================================
+CATALOG = {
+    "Mineral Water": {"category": "Hydration", "cost": 0.60, "retail": 1.29, "target_par": 10, "color": "#00d2d3"},
+    "Coca-Cola":    {"category": "Carbonated", "cost": 0.85, "retail": 1.99, "target_par": 8,  "color": "#ff4757"},
+    "Pepsi":        {"category": "Carbonated", "cost": 0.80, "retail": 1.89, "target_par": 8,  "color": "#2ed573"},
+    "Sprite":       {"category": "Carbonated", "cost": 0.75, "retail": 1.79, "target_par": 6,  "color": "#ffa502"},
+    "Pure Milk":     {"category": "Dairy",      "cost": 1.20, "retail": 2.49, "target_par": 6,  "color": "#70a1ff"}
 }
-PAR_LEVELS = {
-    "Mineral Water": 8,
-    "Coca-Cola": 8,
-    "Pepsi": 8,
-    "Sprite": 6,
-    "Pure Milk": 5
-}
+CLASSES = list(CATALOG.keys())
 
-# --- SIDEBAR CONFIGURATION ---
-st.sidebar.image("https://img.icons8.com/fluency/96/shop.png", width=64)
-st.sidebar.title("StockSense Pro")
-st.sidebar.caption("Automated Shelf Auditing System v2.4")
+# ==========================================
+# SIDEBAR CONTROLS
+# ==========================================
+with st.sidebar:
+    st.markdown("## ⚡ StockSense Pro")
+    st.caption("AI Retail Edge Vision System — v3.1")
+    st.markdown("---")
+    
+    st.subheader("🔑 Inference Credentials")
+    api_key = st.text_input("Roboflow API Key", type="password", help="Enter your private Roboflow API key")
+    model_endpoint = st.text_input("Endpoint / Version", value="stocksense-pro/1")
+    
+    st.markdown("---")
+    st.subheader("🎯 Vision Hyperparameters")
+    confidence_threshold = st.slider("Detection Confidence (%)", 15, 95, 40)
+    overlap_threshold = st.slider("Non-Max Suppression (%)", 10, 90, 30)
+    
+    st.markdown("---")
+    st.caption("Deployment Node: **Active | Cloud Server**")
+    st.caption("Camera Feed ID: **CAM-SHELF-04B**")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Model Credentials")
-ROBOFLOW_API_KEY = st.sidebar.text_input("Roboflow API Key", type="password", help="Enter your Roboflow private API key")
-MODEL_ENDPOINT = st.sidebar.text_input("Model ID / Endpoint", value="stocksense-pro/1")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Detection Filters")
-CONFIDENCE_THRESHOLD = st.sidebar.slider("Confidence Cutoff (%)", min_value=10, max_value=100, value=40)
-OVERLAP_THRESHOLD = st.sidebar.slider("Overlap / NMS (%)", min_value=10, max_value=100, value=30)
-
-st.sidebar.markdown("---")
-st.sidebar.info("💡 **Tip**: Adjust confidence down if dimly-lit shelf edges miss product detections.")
-
-# --- MAIN DASHBOARD HEADER ---
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
-    st.title("📦 Store Inventory & Shelf Audit Portal")
-    st.markdown("Real-time automated edge inventory tracking, out-of-stock anomaly alerts, and restock logistics.")
-with col_head2:
+# ==========================================
+# TOP HERO HEADER
+# ==========================================
+h_col1, h_col2 = st.columns([3, 1])
+with h_col1:
+    st.title("🛒 Autonomous Shelf Audit & Inventory Control")
+    st.markdown("Live computer vision inference, planogram share analytics, and automated restocking dispatch.")
+with h_col2:
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**Store ID:** #SF-4089 | **Zone:** Beverages & Dairy")
+    st.markdown("""
+        <div style="text-align: right; color: #8b949e; font-size: 0.85rem;">
+            <b>Store Branch:</b> North Zone Supercenter<br>
+            <b>Aisle:</b> 04 (Beverages & Dairy)
+        </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# --- IMAGE INGESTION ---
-uploaded_file = st.file_uploader("Upload Retail Shelf Scan", type=["jpg", "jpeg", "png"])
+# ==========================================
+# INPUT PANEL (FILE UPLOADER)
+# ==========================================
+uploaded_file = st.file_uploader("📥 Ingest Shelf Scanner Capture", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     source_img = Image.open(uploaded_file).convert("RGB")
-    
-    col_img1, col_img2 = st.columns(2)
-    with col_img1:
-        st.subheader("📷 Ingested Scan")
+    img_width, img_height = source_img.size
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.markdown("#### 📸 Raw Scan Preview")
         st.image(source_img, use_container_width=True)
+        st.caption(f"Input Dimensions: {img_width} x {img_height} px")
+    
+    with c2:
+        st.markdown("#### ⚙️ Analysis Actions")
+        st.write("Run deep learning detection to inspect shelf facing, identify gaps, and calculate procurement deficits.")
+        audit_trigger = st.button("🚀 Run Comprehensive AI Audit", type="primary", use_container_width=True)
 
-    if st.button("🚀 Run Comprehensive Shelf Audit", type="primary"):
-        if not ROBOFLOW_API_KEY:
-            st.error("Please enter your Roboflow API key in the left sidebar to connect to your trained model.")
-        else:
-            with st.spinner("Processing computer vision inference and inventory metrics..."):
-                buffered = io.BytesIO()
-                source_img.save(buffered, format="JPEG")
-                img_payload = buffered.getvalue()
+    if audit_trigger:
+        if not api_key:
+            st.error("Missing Roboflow API Key. Enter your credential in the sidebar.")
+            st.stop()
 
-                api_url = (
-                    f"https://detect.roboflow.com/{MODEL_ENDPOINT}"
-                    f"?api_key={ROBOFLOW_API_KEY}"
-                    f"&confidence={CONFIDENCE_THRESHOLD}"
-                    f"&overlap={OVERLAP_THRESHOLD}"
+        start_time = time.time()
+        
+        # Prepare bytes
+        buffered = io.BytesIO()
+        source_img.save(buffered, format="JPEG", quality=95)
+        img_bytes = buffered.getvalue()
+
+        # Roboflow API Call
+        api_url = (
+            f"https://detect.roboflow.com/{model_endpoint}"
+            f"?api_key={api_key}"
+            f"&confidence={confidence_threshold}"
+            f"&overlap={overlap_threshold}"
+        )
+
+        with st.spinner("🤖 Running vision inference and computing inventory health..."):
+            try:
+                response = requests.post(api_url, files={"file": img_bytes})
+                latency = round((time.time() - start_time) * 1000, 1)
+            except Exception as e:
+                st.error(f"Connection failed: {e}")
+                st.stop()
+
+        if response.status_code != 200:
+            st.error(f"Roboflow API returned status {response.status_code}: {response.text}")
+            st.stop()
+
+        payload = response.json()
+        predictions = payload.get("predictions", [])
+        
+        # Bounding Box Annotation
+        annotated_img = source_img.copy()
+        draw = ImageDraw.Draw(annotated_img)
+        detected_counts = {c: 0 for c in CLASSES}
+        pred_records = []
+
+        for p in predictions:
+            c_name = p.get("class")
+            conf = p.get("confidence", 0.0)
+            x, y, w, h = p.get("x"), p.get("y"), p.get("width"), p.get("height")
+            
+            x0 = x - (w / 2)
+            y0 = y - (h / 2)
+            x1 = x + (w / 2)
+            y1 = y + (h / 2)
+
+            box_color = CATALOG.get(c_name, {}).get("color", "#2ecc71")
+            draw.rectangle([x0, y0, x1, y1], outline=box_color, width=4)
+            
+            label_text = f"{c_name} {int(conf * 100)}%"
+            draw.rectangle([x0, max(0, y0 - 22), x0 + len(label_text) * 8.5, y0], fill=box_color)
+            draw.text((x0 + 4, max(0, y0 - 18)), label_text, fill="#000000")
+
+            if c_name in detected_counts:
+                detected_counts[c_name] += 1
+            else:
+                detected_counts[c_name] = 1
+
+            pred_records.append({
+                "SKU": c_name,
+                "Confidence": conf,
+                "X_Center": x,
+                "Y_Center": y
+            })
+
+        # ==========================================
+        # EXECUTIVE DASHBOARD TABS
+        # ==========================================
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🔎 Live Vision Audit", 
+            "📊 Planogram & Category Insights", 
+            "📋 Automated Procurement (PO)", 
+            "⚡ Diagnostics & Telemetry"
+        ])
+
+        # ------------------------------------------
+        # TAB 1: LIVE VISION AUDIT
+        # ------------------------------------------
+        with tab1:
+            st.markdown("### 🖼️ Detection Results")
+            res_col1, res_col2 = st.columns([1, 1])
+            with res_col1:
+                st.image(annotated_img, caption="Bounding Boxes & Confidence Labels", use_container_width=True)
+            with res_col2:
+                # Key Metrics Cards
+                total_units = sum(detected_counts.values())
+                stock_value = sum(detected_counts[k] * CATALOG[k]["retail"] for k in CLASSES)
+                oos_count = sum(1 for k in CLASSES if detected_counts[k] == 0)
+                low_count = sum(1 for k in CLASSES if 0 < detected_counts[k] <= 3)
+
+                m1, m2 = st.columns(2)
+                m1.metric("Total Items Detected", f"{total_units} units")
+                m2.metric("Inventory Retail Value", f"${stock_value:.2f}")
+
+                m3, m4 = st.columns(2)
+                m3.metric("Critical Stockouts", f"{oos_count} SKUs", delta_color="inverse")
+                m4.metric("Low Stock Alerts", f"{low_count} SKUs", delta_color="inverse")
+
+                st.markdown("---")
+                st.markdown("#### Real-time Stock Gauges")
+                for item in CLASSES:
+                    curr = detected_counts[item]
+                    par = CATALOG[item]["target_par"]
+                    fill_ratio = min(1.0, curr / par)
+                    
+                    st.write(f"**{item}** ({curr}/{par} units)")
+                    st.progress(fill_ratio)
+
+        # ------------------------------------------
+        # TAB 2: PLANOGRAM & CATEGORY INSIGHTS
+        # ------------------------------------------
+        with tab2:
+            st.markdown("### 📈 Visual Merchandise & Distribution")
+            chart_col1, chart_col2 = st.columns(2)
+
+            with chart_col1:
+                # Target vs Actual Bar Chart
+                df_bar = []
+                for k in CLASSES:
+                    df_bar.append({"Product": k, "Quantity": detected_counts[k], "Metric": "Current On-Shelf"})
+                    df_bar.append({"Product": k, "Quantity": CATALOG[k]["target_par"], "Metric": "Target Capacity"})
+                df_bar_plot = pd.DataFrame(df_bar)
+
+                fig_bars = px.bar(
+                    df_bar_plot,
+                    x="Product",
+                    y="Quantity",
+                    color="Metric",
+                    barmode="group",
+                    title="Actual Stock vs. Planogram Par Levels",
+                    color_discrete_map={"Current On-Shelf": "#2ecc71", "Target Capacity": "#7f8c8d"}
                 )
-                
-                try:
-                    res = requests.post(api_url, files={"file": img_payload})
-                except Exception as e:
-                    st.error(f"Network error connecting to inference endpoint: {e}")
-                    st.stop()
+                fig_bars.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_bars, use_container_width=True)
 
-                if res.status_code == 200:
-                    payload = res.json()
-                    predictions = payload.get("predictions", [])
-                    
-                    # Annotate bounding boxes
-                    annotated_canvas = source_img.copy()
-                    draw = ImageDraw.Draw(annotated_canvas)
+            with chart_col2:
+                # Share of Shelf Donut Chart
+                fig_donut = px.pie(
+                    names=list(detected_counts.keys()),
+                    values=list(detected_counts.values()),
+                    title="Planogram Facing Share (%)",
+                    hole=0.45,
+                    color_discrete_sequence=[CATALOG[k]["color"] for k in CLASSES]
+                )
+                fig_donut.update_layout(template="plotly_dark", plot_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_donut, use_container_width=True)
 
-                    detected_counts = {c: 0 for c in CLASSES}
-                    
-                    for p in predictions:
-                        cls_name = p.get("class")
-                        conf = p.get("confidence", 0.0)
-                        x, y, w, h = p.get("x"), p.get("y"), p.get("width"), p.get("height")
-                        
-                        x0 = x - (w / 2)
-                        y0 = y - (h / 2)
-                        x1 = x + (w / 2)
-                        y1 = y + (h / 2)
+        # ------------------------------------------
+        # TAB 3: PROCUREMENT & PURCHASE ORDERS
+        # ------------------------------------------
+        with tab3:
+            st.markdown("### 📝 Smart Restock Ledger & Purchase Order Generation")
+            
+            po_data = []
+            total_reorder_cost = 0.0
+            
+            for item in CLASSES:
+                current = detected_counts[item]
+                target = CATALOG[item]["target_par"]
+                needed = max(0, target - current)
+                cost = needed * CATALOG[item]["cost"]
+                total_reorder_cost += cost
 
-                        draw.rectangle([x0, y0, x1, y1], outline="#00E676", width=4)
-                        tag = f"{cls_name} ({int(conf * 100)}%)"
-                        draw.rectangle([x0, max(0, y0 - 22), x0 + len(tag) * 8.5, y0], fill="#00E676")
-                        draw.text((x0 + 4, max(0, y0 - 20)), tag, fill="#000000")
-
-                        if cls_name in detected_counts:
-                            detected_counts[cls_name] += 1
-                        else:
-                            detected_counts[cls_name] = 1
-
-                    with col_img2:
-                        st.subheader("🎯 Model Detections")
-                        st.image(annotated_canvas, use_container_width=True)
-
-                    # --- COMPUTE ANALYTICS ---
-                    total_detected_units = sum(detected_counts.values())
-                    total_inventory_val = sum(detected_counts[item] * UNIT_PRICES.get(item, 1.50) for item in detected_counts)
-                    low_stock_items = [k for k, v in detected_counts.items() if 0 < v <= 3]
-                    out_of_stock_items = [k for k, v in detected_counts.items() if v == 0]
-                    
-                    health_pct = int(((len(CLASSES) - len(out_of_stock_items) - (0.5 * len(low_stock_items))) / len(CLASSES)) * 100)
-
-                    # --- EXECUTIVE METRICS ---
-                    st.markdown("### 📈 Executive Performance KPIs")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Total Shelf Units", f"{total_detected_units} items", delta="Detected")
-                    m2.metric("Audit Shelf Health", f"{health_pct}%", delta="-Action Needed" if health_pct < 75 else "Optimal")
-                    m3.metric("Shelf Stock Value", f"${total_inventory_val:.2f}")
-                    m4.metric("Attention Required", f"{len(out_of_stock_items) + len(low_stock_items)} SKUs", delta_color="inverse")
-
-                    st.markdown("---")
-
-                    # --- VISUALIZATION SECTION ---
-                    st.markdown("### 📊 Shelf Capacity & Inventory Analytics")
-                    chart_col1, chart_col2 = st.columns(2)
-
-                    # Bar comparison chart: On-Shelf vs Recommended Par Level
-                    chart_data = []
-                    for product in CLASSES:
-                        current_qty = detected_counts.get(product, 0)
-                        par_qty = PAR_LEVELS.get(product, 8)
-                        chart_data.append({"SKU": product, "Quantity": current_qty, "Type": "Current Stock"})
-                        chart_data.append({"SKU": product, "Quantity": par_qty, "Type": "Target Par Level"})
-
-                    df_chart = pd.DataFrame(chart_data)
-                    fig_bar = px.bar(
-                        df_chart, 
-                        x="SKU", 
-                        y="Quantity", 
-                        color="Type", 
-                        barmode="group",
-                        title="Current Stock vs Target Par Levels",
-                        color_discrete_map={"Current Stock": "#00C853", "Target Par Level": "#616161"}
-                    )
-                    fig_bar.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-                    chart_col1.plotly_chart(fig_bar, use_container_width=True)
-
-                    # Donut chart: Stock share
-                    fig_donut = px.pie(
-                        names=list(detected_counts.keys()), 
-                        values=list(detected_counts.values()),
-                        title="SKU Distribution Share",
-                        hole=0.45,
-                        color_discrete_sequence=px.colors.qualitative.Prism
-                    )
-                    fig_donut.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-                    chart_col2.plotly_chart(fig_donut, use_container_width=True)
-
-                    # --- AUDIT SUMMARY TABLE ---
-                    st.markdown("### 📋 SKU Audit & Automated Restock Ledger")
-                    table_rows = []
-                    for item in CLASSES:
-                        count = detected_counts.get(item, 0)
-                        par = PAR_LEVELS.get(item, 8)
-                        reorder_qty = max(0, par - count)
-                        cost = reorder_qty * UNIT_PRICES.get(item, 1.50)
-                        
-                        if count == 0:
-                            status = "🔴 Out of Stock"
-                        elif count <= 3:
-                            status = "🟡 Low Stock"
-                        else:
-                            status = "🟢 Satisfactory"
-
-                        table_rows.append({
-                            "Product SKU": item,
-                            "On-Shelf Count": count,
-                            "Target Par": par,
-                            "Status": status,
-                            "Reorder Suggestion": f"{reorder_qty} units",
-                            "Est. Restock Cost": f"${cost:.2f}"
-                        })
-
-                    df_table = pd.DataFrame(table_rows)
-                    st.dataframe(df_table, use_container_width=True)
-
-                    # --- EXPORT REPORT ---
-                    csv = df_table.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Purchase Order & Audit Report (CSV)",
-                        data=csv,
-                        file_name="stocksense_audit_manifest.csv",
-                        mime="text/csv"
-                    )
-
+                if current == 0:
+                    status = "🔴 OUT OF STOCK"
+                elif current <= 3:
+                    status = "🟡 LOW STOCK"
                 else:
-                    st.error(f"Inference error {res.status_code}: {res.text}")
+                    status = "🟢 SUFFICIENT"
+
+                po_data.append({
+                    "SKU": item,
+                    "Category": CATALOG[item]["category"],
+                    "On-Shelf": current,
+                    "Target Par": target,
+                    "Status": status,
+                    "Restock Quantity": needed,
+                    "Unit Cost": f"${CATALOG[item]['cost']:.2f}",
+                    "Total Reorder Cost": f"${cost:.2f}"
+                })
+
+            df_po = pd.DataFrame(po_data)
+            st.dataframe(df_po, use_container_width=True)
+
+            c_po1, c_po2 = st.columns([2, 1])
+            with c_po1:
+                st.markdown(f"#### 💰 Total Procurement Cost: **${total_reorder_cost:.2f}**")
+            with c_po2:
+                csv_file = df_po.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Official PO (CSV)",
+                    data=csv_file,
+                    file_name="PO_Aisle4_InventoryManifest.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+        # ------------------------------------------
+        # TAB 4: DIAGNOSTICS & TELEMETRY
+        # ------------------------------------------
+        with tab4:
+            st.markdown("### ⚡ System Performance & Inspection Logs")
+            
+            col_t1, col_t2, col_t3 = st.columns(3)
+            col_t1.metric("Inference Round-Trip", f"{latency} ms")
+            col_t2.metric("Total Detections", len(predictions))
+            col_t3.metric("Model Architecture", "Roboflow Fast (YOLO)")
+
+            st.markdown("---")
+            if pred_records:
+                df_preds = pd.DataFrame(pred_records)
+                st.markdown("#### Detections Confidence Distribution")
+                fig_hist = px.histogram(
+                    df_preds, 
+                    x="Confidence", 
+                    nbins=10, 
+                    color="SKU",
+                    title="Model Confidence Spread",
+                    template="plotly_dark"
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
